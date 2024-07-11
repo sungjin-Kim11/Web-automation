@@ -1,8 +1,6 @@
-﻿using System;
 using System.Diagnostics;
-using System.IO;
+using System.IO.Compression;
 using System.Net;
-using System.Threading.Tasks;
 using Microsoft.Playwright;
 
 namespace hometax_login
@@ -22,23 +20,26 @@ namespace hometax_login
             }
             InstallPlaywrightBrowsers();
 
+            // Chromium 브라우저 다운로드 및 경로 설정
+            string chromiumPath = await DownloadChromium();
+            if (chromiumPath == null)
+            {
+                Console.WriteLine("Chromium 다운로드에 실패하였습니다. 프로그램을 종료합니다.");
+                return;
+            }
 
             // Playwright를 사용하여 Chromium 실행 및 설정
-            string userHomeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            string playwrightInstallScript = Path.Combine(userHomeDirectory, "Desktop", "Medi_Web2", "ms-playwright","chromium-1117", "chrome-win", "chrome.exe");
-            Console.WriteLine($"Chromium 실행 파일 경로: {playwrightInstallScript}");
             using var playwright = await Playwright.CreateAsync();
             var browser = await playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
             {
                 Headless = false,
                 Args = new[] { "--remote-debugging-port=9222" },
-                ExecutablePath = playwrightInstallScript
+                ExecutablePath = chromiumPath
             });
             Console.WriteLine("브라우저가 성공적으로 실행되었습니다.");
             var context = await browser.NewContextAsync();
             var page = await context.NewPageAsync();
 
-            //명령줄 인수 검사 코
             if(args.Length < 2)
             {
             Console.WriteLine("args error");
@@ -86,7 +87,7 @@ namespace hometax_login
             Console.WriteLine("확인 버튼 클릭");
             // 로그인을 실패하였을 때 창이 꺼지면서 비밀번호가 틀렸다는 메시지를 주는 코드 (예외처리)
             // 텍스트로 검색하여 약국 선택
-            string searchmedi_id = "sunbi8575";
+            string searchmedi_id = "*";
             var targetRowSelector_id = $"tr:has-text('{searchmedi_id}')";
             await page.WaitForSelectorAsync(targetRowSelector_id );
             var targetRow_medi = await page.QuerySelectorAsync(targetRowSelector_id );
@@ -110,43 +111,46 @@ namespace hometax_login
             await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
             // 그 전에 쓴 코드에는 오류가 떠서 3초 대기 후 종료되는 코드로 변경
             await Task.Delay(3000);
-            await browser.CloseAsync();         
+            await browser.CloseAsync();  
         }
 
-        //Playwright 브라우저 설치 코드
+        // Playwright 브라우저 설치 코드
         static void InstallPlaywrightBrowsers()
         {
             // 사용자 홈 디렉토리를 기반으로 playwright.ps1 스크립트 파일의 경로 설정
-            string userHomeDirectory = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            string playwrightInstallScript = Path.Combine(userHomeDirectory, "Desktop", "Medi_Web2", "playwright.ps1");
-            if (!File.Exists(playwrightInstallScript))
+            string currentDirectory = AppDomain.CurrentDomain.BaseDirectory;
+            string relativePath = Path.Combine(currentDirectory, "playwright.ps1");
+            // 파일이 실제로 존재하는지 확인
+            if (File.Exists(relativePath))
             {
-                Console.WriteLine($"스크립트 파일이 존재하지 않습니다: {playwrightInstallScript}");
-                return;
-            }
-            var processInfo = new ProcessStartInfo("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{playwrightInstallScript}\"")
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-            using (var process = Process.Start(processInfo))
-            {
-                if (process != null)
+                Console.WriteLine("playwright.ps1 파일이 존재합니다.");
+                var processInfo = new ProcessStartInfo("powershell.exe", $"-NoProfile -ExecutionPolicy Bypass -File \"{relativePath}\"")
                 {
-                    process.OutputDataReceived += (sender, args) => Console.WriteLine(args.Data);
-                    process.ErrorDataReceived += (sender, args) => Console.WriteLine(args.Data);
-                    process.BeginOutputReadLine();
-                    process.BeginErrorReadLine();
-                    process.WaitForExit();
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using (var process = Process.Start(processInfo))
+                {
+                    if (process != null)
+                    {
+                        process.OutputDataReceived += (sender, args) => Console.WriteLine(args.Data);
+                        process.ErrorDataReceived += (sender, args) => Console.WriteLine(args.Data);
+                        process.BeginOutputReadLine();
+                        process.BeginErrorReadLine();
+                        process.WaitForExit();
+                    }
                 }
+                Console.WriteLine("Playwright 브라우저가 성공적으로 설치되었습니다.");
             }
-            Console.WriteLine("Playwright 브라우저가 성공적으로 설치되었습니다.");
+            else
+            {
+                Console.WriteLine("playwright.ps1 파일이 존재하지 않습니다.");
+            }
         }
-        //Playwright 브라우저가 깔려있는지 확인하는 코드(예외처리) 필요함
 
-        //PowerShell 설치 코드
+        // PowerShell 설치 코드
         static void InstallPowerShell()
         {
             string downloadUrl = "https://github.com/PowerShell/PowerShell/releases/download/v7.2.0/PowerShell-7.2.0-win-x64.msi";
@@ -178,7 +182,7 @@ namespace hometax_login
             }
         }
 
-        //Powerehell이 깔려있는지 확인하는 코드
+        // PowerShell 설치 확인 코드
         static bool CheckIfPowerShellInstalled()
         {
             var processInfo = new ProcessStartInfo
@@ -199,6 +203,51 @@ namespace hometax_login
                 }
             }
             return false;
+        }
+
+        // Chromium 다운로드 함수
+        static async Task<string> DownloadChromium()
+        {
+            string downloadUrl = "https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/1325782/chrome-win.zip";
+            string downloadDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "chromium");
+            string zipFile = Path.Combine(downloadDir, "chrome-win.zip");
+            string chromiumExecutable = Path.Combine(downloadDir, "chrome-win", "chrome.exe");
+            try
+            {
+                // 이미 다운로드된 파일이 있는지 확인
+                if (Directory.Exists(downloadDir) && File.Exists(chromiumExecutable))
+                {
+                    Console.WriteLine("Chromium 이미 다운로드되어 있습니다.");
+                    return chromiumExecutable;
+                }
+                // 다운로드 디렉토리가 없으면 생성
+                Directory.CreateDirectory(downloadDir);
+                // Chromium 다운로드
+                using (var client = new WebClient())
+                {
+                    Console.WriteLine($"Chromium 다운로드 중: {downloadUrl}");
+                    await client.DownloadFileTaskAsync(new Uri(downloadUrl), zipFile);
+                }
+                // 압축 해제
+                ZipFile.ExtractToDirectory(zipFile, downloadDir);
+                // 압축 해제 후 Chromium 실행 파일 경로 반환
+                Console.WriteLine($"Chromium 다운로드 완료. 경로: {chromiumExecutable}");
+                return chromiumExecutable;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Chromium 다운로드 실패: {ex.Message}");
+                return null;
+            }
+            finally
+            {
+                // 압축 파일 삭제
+                if (File.Exists(zipFile))
+                {
+                    Console.WriteLine("압축 파일 삭제 중");
+                }
+                    File.Delete(zipFile);
+            }
         }
     }
 }
